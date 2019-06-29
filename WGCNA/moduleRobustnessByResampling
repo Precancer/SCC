@@ -20,7 +20,7 @@ analysisID = paste(nRuns, replace) ##A unique identified for each run
 enableWGCNAThreads(nThreads = nThreads)
 
 cat("Importing data...\n")
-load("inputModuleData.RData")
+load("inputDataModules.RData")
 ## data.clin - clinical information
 ## data <- Expression data for the genes in the modules
 
