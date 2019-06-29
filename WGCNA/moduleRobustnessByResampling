@@ -1,0 +1,102 @@
+## @Author: Mihaela Angelova
+## Email: mihaela.angelova@crick.ac.uk
+
+## Adaptations of WGCNA::sampledBlockwiseModules function 
+options(stringsAsFactors = F)
+if(!require("WGCNA")) {
+  install.packages("WGCNA", dep = T)
+}
+if(!require("flashClust")) {
+  install.packages("flashClust")
+}
+if(!require("plyr")) {
+  install.packages("plyr")
+}
+
+nThreads = 3 # Number of threads to run in parallel
+nRuns = 50 # Number of resampling iterations
+replace = FALSE # Sampling with (TRUE) or without (FALSE) replacement; logical value
+analysisID = paste(nRuns, replace) ##A unique identified for each run
+enableWGCNAThreads(nThreads = nThreads)
+
+cat("Importing data...\n")
+load("inputModuleData.RData")
+## data.clin - clinical information
+## data <- Expression data for the genes in the modules
+
+result = list()
+stages = data.clin$stage[match(rownames(data), data.clin$file)]
+
+## WGCNA settings applied for module detection
+minModuleSize <- 50
+power = 12
+corType = "pearson"
+networkType = "signed";
+saveTOMs = F; randomSeed = 0;
+checkMissingData = FALSE; 
+verbose = 5
+checkSoftPower = TRUE; nPowerCheckSamples = 2000; 
+saveTOMFileBase = "TOM"; 
+indent = 0; stages = stages
+spaces = indentSpaces(indent)
+runTOMFileBase = saveTOMFileBase
+nSamples = nrow(data)
+nGenes = ncol(data)
+corFnc = "cor"
+seedSaved = FALSE
+fraction = if (replace) 1 else 0.63
+if (!is.null(randomSeed)) {
+  if (exists(".Random.seed")) {
+    seedSaved = TRUE
+    savedSeed = .Random.seed
+  }
+  set.seed(randomSeed)
+}
+if (checkSoftPower) {
+  if (verbose > 0) 
+    printFlush(paste(spaces, "...calculating reference mean adjacencies.."))
+  useGenes = sample(nGenes, nPowerCheckSamples, replace = FALSE)
+  adj = adjacency(data[, useGenes], power = power, type = networkType, 
+                  corFnc = corFnc)
+  refAdjMeans = mean(as.dist(adj))
+}
+
+startRunIndex = length(result) + 1;
+skipUnsampledCalculation = TRUE;
+endRunIndex = startRunIndex + nRuns - 1;
+for (run in startRunIndex:endRunIndex) {
+  set.seed(randomSeed + 2 * run + 1)
+  if (saveTOMs) 
+    runTOMFileBase = paste(saveTOMFileBase, "-run-", run, sep = "")
+  if (run > startRunIndex || skipUnsampledCalculation) {
+    useSamples = unlist(lapply(split(1:nrow(data), stages), function(x) {
+      sample(x, size = length(x) * fraction, replace = replace)
+    }))
+  } else useSamples = c(1:nSamples)
+  if (verbose > 2) {
+    printFlush(paste(spaces, "Using the following samples: "))
+    print(useSamples)
+  }
+  samExpr = as.matrix(data[useSamples, ])
+  samPowers = power
+  if (checkSoftPower) {
+    if (verbose > 1) 
+      printFlush(paste(spaces, "  ...calculating mean adjacencies in sampled data.."))
+    adj = adjacency(samExpr[, useGenes], power = power, 
+                    type = networkType, corFnc = corFnc)
+    sampledAdjMeans = mean(as.dist(adj))
+    samPowers = power * log(refAdjMeans)/log(sampledAdjMeans)
+    if (!is.finite(samPowers)) 
+      samPowers = power
+  }
+  mods = blockwiseModules(datExpr = samExpr, randomSeed = NULL, 
+                          power = samPowers, corType = corType, networkType = networkType, 
+                          saveTOMs = saveTOMs, saveTOMFileBase = runTOMFileBase, 
+                          verbose = verbose - 2, indent = indent + 2, 
+                          pamRespectsDendro = FALSE, mergeCutHeight = 0.3,
+                          maxBlockSize = 30000, reassignThreshold = 0,
+                          numericLabels = TRUE, minModuleSize = 50, nThreads = nThreads )
+  result[[run]] = list(mods = mods, samples = useSamples, 
+                       powers = samPowers)
+}
+save(result, file = paste0("resampledModules.", analysisID, ".RData"))
